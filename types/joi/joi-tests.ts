@@ -1,4 +1,5 @@
 import Joi = require('joi');
+import { StringSchema, AnySchema, SchemaData, ArraySchema } from './index';
 
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
@@ -16,6 +17,9 @@ declare const func: () => void;
 declare const numArr: number[];
 declare const strArr: string[];
 declare const expArr: RegExp[];
+
+const stringAllowTest: StringSchema = null;
+const stringAllowTestValue: 'test' = stringAllowTest.allow('test').validate('').value;
 
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
@@ -359,8 +363,20 @@ arrSchema = arrSchema.items([schemaMap, schemaMap, schemaLike]);
 
     arrSchema = arrSchema.default(x);
 
-    arrSchema = arrSchema.required();
-    arrSchema = arrSchema.optional();
+    const requiredArrSchema: ArraySchema<{
+        schema: 'ArraySchema';
+        type: Array<unknown>;
+        allowedValues: unknown;
+        required: true;
+        notPresent: boolean;
+    }> = arrSchema.required();
+    const optionalArrSchema: ArraySchema<{
+        schema: 'ArraySchema';
+        type: Array<unknown>;
+        allowedValues: unknown;
+        required: false;
+        notPresent: boolean;
+    }> = arrSchema.optional();
     arrSchema = arrSchema.forbidden();
 
     arrSchema = arrSchema.description(str);

@@ -15,12 +15,13 @@
 //                 Peter Thorson <https://github.com/zaphoyd>
 //                 Will Garcia <https://github.com/thewillg>
 //                 Simon Schick <https://github.com/SimonSchick>
+//                 Krzysztof Miemiec <https://github.com/krzysztof-miemiec>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
-// TypeScript Version: 2.4
+// TypeScript Version: 3.0
 
 // TODO express type of Schema in a type-parameter (.default, .valid, .example etc)
 
-export type Types = 'any' | 'alternatives' | 'array' | 'boolean' | 'binary' | 'date' | 'function' | 'lazy' | 'number' | 'object' | 'string';
+export type Types = 'any' | 'alternatives' | 'array' | 'boolean' | 'binary' | 'date' | 'function' | 'lazy' | 'number' | 'object' | 'string' | 'symbol';
 
 export type LanguageOptions = string | boolean | null | {
     [key: string]: LanguageOptions;
@@ -232,11 +233,23 @@ export interface ValidationResult<T> extends Pick<Promise<T>, 'then' | 'catch'> 
     value: T;
 }
 
-export type SchemaLike = string | number | boolean | object | null | Schema | SchemaMap;
+export type NativeType = string | number | boolean | object | null;
+
+export type SchemaLike = NativeType | Schema | SchemaMap;
 
 export interface SchemaMap {
     [key: string]: SchemaLike | SchemaLike[];
 }
+
+export type SchemaMapType<Map extends SchemaMap> = {
+  [K in keyof Map]:
+    Map[K] extends (NativeType | NativeType[]) ? Map[K] :
+    Map[K] extends Schema ? Type<Map[K]['__']> :
+    Map[K] extends Schema[] ? Type<Map[K][any]['__']> :
+    Map[K] extends SchemaMap ? SchemaMapType<Map[K]> :
+    Map[K] extends SchemaMap[] ? SchemaMapType<Map[K][any]> :
+    never;
+};
 
 export type Schema = AnySchema
     | ArraySchema
@@ -250,62 +263,141 @@ export type Schema = AnySchema
     | StringSchema
     | LazySchema;
 
-export interface AnySchema extends JoiObject {
+export interface SchemaData {
+    schema: Types;
+    type: any;
+    allowedValues: any;
+    required: boolean;
+    notPresent: boolean;
+}
+export type DefaultSchemaData<RequiredData extends {
+    schema: string;
+    type: any;
+}> = RequiredData & {
+    allowedValues: unknown;
+    required: false;
+    notPresent: false;
+};
+
+export type Type<D extends SchemaData> = D['type'];
+export type AllowedValues<D extends SchemaData> = D['allowedValues'];
+export type Required<D extends SchemaData> = D['required'];
+export type NotPresent<D extends SchemaData> = D['notPresent'];
+
+export type Replace<O, K extends keyof O, Value> = { [P in keyof O]: P extends K ? Value : O[P] };
+
+export type CreateSchema<D extends SchemaData, S = D['schema']> =
+    S extends 'array' ? ArraySchema<D> :
+    S extends 'alternatives' ? AlternativesSchema<D> :
+    S extends 'binary' ? BinarySchema<D> :
+    S extends 'boolean' ? BooleanSchema<D> :
+    S extends 'date' ? DateSchema<D> :
+    S extends 'function' ? FunctionSchema<D> :
+    S extends 'number' ? NumberSchema<D> :
+    S extends 'object' ? ObjectSchema<D> :
+    S extends 'string' ? StringSchema<D> :
+    S extends 'lazy' ? LazySchema<D> :
+    S extends 'any' ? AnySchema<D> :
+    never;
+
+export type SchemaValue<
+    S extends Schema,
+    D extends SchemaData = S['__'],
+    Value = AllowedValues<D> extends unknown ? Type<D> : AllowedValues<D>
+    > = NotPresent<D> extends true
+        ? never
+        : (Required<D> extends true
+            ? Value
+            : (Value | undefined)
+        );
+
+export type __AddType<Target, New> = Target extends unknown ? New : (Target | New);
+
+export type __BooleanAnd<A, B> = A extends true ? B extends A ? A : false : false;
+
+export type __SetAllowedValues<D extends SchemaData, NewAllowedValues extends Type<D> | unknown> =
+    CreateSchema<Replace<D, 'allowedValues', NewAllowedValues>>;
+
+export type __SetType<D extends SchemaData, NewType> =
+    CreateSchema<Replace<D, 'type', NewType>>;
+
+export type __AddAllowedValues<D extends SchemaData, AddedAllowedValues extends Type<D> | unknown> =
+    CreateSchema<Replace<D, 'allowedValues', __AddType<AllowedValues<D>, AddedAllowedValues>>>;
+
+export type __RemoveAllowedValues<D extends SchemaData, DisallowedValues extends Type<D> | unknown> =
+    CreateSchema<Replace<D, 'allowedValues', Exclude<AllowedValues<D>, DisallowedValues>>>;
+
+export type __SetRequired<D extends SchemaData, Required extends boolean> =
+    CreateSchema<Replace<D, 'required', Required>>;
+
+export type __SetNotPresent<D extends SchemaData, NotPresent extends boolean> =
+    CreateSchema<Replace<D, 'notPresent', NotPresent>>;
+
+export type __ConcatSchemas<D1 extends SchemaData, D2 extends SchemaData> = CreateSchema<{
+    schema: D1['schema'];
+    type: (D1|D2)['type'];
+    allowedValues: (D1|D2)['allowedValues'];
+    required: __BooleanAnd<D1['required'], D2['required']>;
+    notPresent: __BooleanAnd<D1['notPresent'], D2['notPresent']>;
+}>;
+
+export interface AnySchema<D extends SchemaData = SchemaData> extends JoiObject {
+    __: D;
     schemaType?: Types | string;
 
     /**
      * Validates a value using the schema and options.
      */
-    validate<T>(value: T, options?: ValidationOptions): ValidationResult<T>;
-    validate<T, R>(value: T, callback: (err: ValidationError, value: T) => R): R;
-    validate<T, R>(value: T, options: ValidationOptions, callback: (err: ValidationError, value: T) => R): R;
+    validate(value: any, options?: ValidationOptions): ValidationResult<SchemaValue<this>>;
+    validate<R>(value: any, callback: (err: ValidationError, value: ValidationResult<SchemaValue<this>>) => R): R;
+    validate<R>(value: any, options: ValidationOptions, callback: (err: ValidationError, value: ValidationResult<SchemaValue<this>>) => R): R;
 
     /**
      * Whitelists a value
      */
-    allow(...values: any[]): this;
-    allow(values: any[]): this;
+    allow<N extends Array<Type<D>>>(...values: N): __AddAllowedValues<D, N[any]>;
+    allow<N extends Array<Type<D>>>(values: N): __AddAllowedValues<D, N[any]>;
 
     /**
      * Adds the provided values into the allowed whitelist and marks them as the only valid values allowed.
      */
-    valid(...values: any[]): this;
-    valid(values: any[]): this;
-    only(...values: any[]): this;
-    only(values: any[]): this;
-    equal(...values: any[]): this;
-    equal(values: any[]): this;
+    valid<N extends Array<Type<D>>>(...values: N): __SetAllowedValues<D, N[any]>;
+    valid<N extends Array<Type<D>>>(values: N): __SetAllowedValues<D, N[any]>;
+    only<N extends Array<Type<D>>>(...values: N): __SetAllowedValues<D, N[any]>;
+    only<N extends Array<Type<D>>>(values: N): __SetAllowedValues<D, N[any]>;
+    equal<N extends Array<Type<D>>>(...values: N): __SetAllowedValues<D, N[any]>;
+    equal<N extends Array<Type<D>>>(values: N): __SetAllowedValues<D, N[any]>;
 
     /**
      * Blacklists a value
      */
-    invalid(...values: any[]): this;
-    invalid(values: any[]): this;
-    disallow(...values: any[]): this;
-    disallow(values: any[]): this;
-    not(...values: any[]): this;
-    not(values: any[]): this;
+    invalid<N extends Array<Type<D>>>(...values: N): __RemoveAllowedValues<D, N[any]>;
+    invalid<N extends Array<Type<D>>>(values: N): __RemoveAllowedValues<D, N[any]>;
+    disallow<N extends Array<Type<D>>>(...values: N): __RemoveAllowedValues<D, N[any]>;
+    disallow<N extends Array<Type<D>>>(values: N): __RemoveAllowedValues<D, N[any]>;
+    not<N extends Array<Type<D>>>(...values: N): __RemoveAllowedValues<D, N[any]>;
+    not<N extends Array<Type<D>>>(values: N): __RemoveAllowedValues<D, N[any]>;
 
     /**
      * Marks a key as required which will not allow undefined as value. All keys are optional by default.
      */
-    required(): this;
-    exist(): this;
+    required(): __SetRequired<D, true>;
+    exist(): __SetRequired<D, true>;
 
     /**
      * Marks a key as optional which will allow undefined as values. Used to annotate the schema for readability as all keys are optional by default.
      */
-    optional(): this;
+    optional(): __SetRequired<D, false>;
 
     /**
      * Marks a key as forbidden which will not allow any value except undefined. Used to explicitly forbid keys.
      */
-    forbidden(): this;
+    forbidden(): __SetNotPresent<D, true>;
 
     /**
      * Marks a key to be removed from a resulting object or array after validation. Used to sanitize output.
      */
-    strip(): this;
+    strip(): __SetNotPresent<D, true>;
 
     /**
      * Annotates the key
@@ -370,13 +462,13 @@ export interface AnySchema extends JoiObject {
     /**
      * Returns a new type that is the result of adding the rules of one type to another.
      */
-    concat(schema: this): this;
+    concat<Schema extends AnySchema>(schema: Schema): __ConcatSchemas<D, Schema['__']>;
 
     /**
      * Converts the type into an alternatives type where the conditions are merged into the type definition where:
      */
-    when(ref: string | Reference, options: WhenOptions): AlternativesSchema;
-    when(ref: Schema, options: WhenSchemaOptions): AlternativesSchema;
+    when(ref: string | Reference, options: WhenOptions): AlternativesSchema<D>; // TODO correct alternatives schema
+    when(ref: Schema, options: WhenSchemaOptions): AlternativesSchema<D>; // TODO correct alternatives schema
 
     /**
      * Overrides the key name in error messages.
@@ -449,7 +541,10 @@ export interface State {
     reference?: any;
 }
 
-export interface BooleanSchema extends AnySchema {
+export interface BooleanSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'boolean';
+    type: boolean;
+}>> extends AnySchema<D> {
     /**
      * Allows for additional values to be considered valid booleans by converting them to true during validation.
      * Accepts a value or an array of values. String comparisons are by default case insensitive,
@@ -474,7 +569,10 @@ export interface BooleanSchema extends AnySchema {
     insensitive(enabled?: boolean): this;
 }
 
-export interface NumberSchema extends AnySchema {
+export interface NumberSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'number';
+    type: number;
+}>> extends AnySchema<D> {
     /**
      * Specifies the minimum value.
      * It can also be a reference to another field.
@@ -531,7 +629,10 @@ export interface NumberSchema extends AnySchema {
     port(): this;
 }
 
-export interface StringSchema extends AnySchema {
+export interface StringSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'string';
+    type: string;
+}>> extends AnySchema<D> {
     /**
      * Allows the value to match any whitelist of blacklist item in a case insensitive comparison.
      */
@@ -670,12 +771,18 @@ export interface StringSchema extends AnySchema {
     trim(): this;
 }
 
-export interface SymbolSchema extends AnySchema {
+export interface SymbolSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'symbol';
+    type: symbol;
+}>> extends AnySchema<D> {
     // TODO: support number and symbol index
     map(iterable: Iterable<[string | number | boolean | symbol, symbol]> | { [key: string]: symbol }): this;
 }
 
-export interface ArraySchema extends AnySchema {
+export interface ArraySchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'array';
+    type: Array<unknown>;
+}>> extends AnySchema<D> {
     /**
      * Allow this array to be sparse.
      * enabled can be used with a falsy value to go back to the default behavior.
@@ -736,16 +843,23 @@ export interface ArraySchema extends AnySchema {
     unique<T = any>(comparator?: (a: T, b: T) => boolean): this;
 }
 
-export interface ObjectSchema extends AnySchema {
+export interface ObjectSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'object';
+    type: {};
+}>> extends AnySchema<D> {
     /**
      * Sets or extends the allowed object keys.
      */
-    keys(schema?: SchemaMap): this;
+    keys<Schema extends SchemaMap>(schema?: SchemaMap): Schema extends (null | undefined | {})
+    ? this
+    : __SetType<D, SchemaMapType<Schema>>;
 
     /**
      * Appends the allowed object keys. If schema is null, undefined, or {}, no changes will be applied.
      */
-    append(schema?: SchemaMap): this;
+    append<Schema extends SchemaMap>(schema?: Schema): Schema extends (null | undefined | {})
+        ? this
+        : __SetType<D, Type<D> & SchemaMapType<Schema>>;
 
     /**
      * Specifies the minimum number of keys in the object.
@@ -869,7 +983,10 @@ export interface ObjectSchema extends AnySchema {
     forbiddenKeys(...children: string[]): this;
 }
 
-export interface BinarySchema extends AnySchema {
+export interface BinarySchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'binary';
+    type: any;
+}>> extends AnySchema<D> {
     /**
      * Sets the string encoding format if a string input is converted to a buffer.
      */
@@ -891,7 +1008,10 @@ export interface BinarySchema extends AnySchema {
     length(limit: number): this;
 }
 
-export interface DateSchema extends AnySchema {
+export interface DateSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'date';
+    type: Date;
+}>> extends AnySchema<D> {
     /**
      * Specifies that the value must be greater than date.
      * Notes: 'now' can be passed in lieu of date so as to always compare relatively to the current date,
@@ -942,7 +1062,10 @@ export interface DateSchema extends AnySchema {
     timestamp(type?: 'javascript' | 'unix'): this;
 }
 
-export interface FunctionSchema extends AnySchema {
+export interface FunctionSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'function';
+    type: (...args: any[]) => any;
+}>> extends AnySchema<D> {
     /**
      * Specifies the arity of the function where:
      * @param n - the arity expected.
@@ -967,14 +1090,18 @@ export interface FunctionSchema extends AnySchema {
     ref(): this;
 }
 
-export interface AlternativesSchema extends AnySchema {
+export interface AlternativesSchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'alternatives';
+    type: any;
+}>> extends AnySchema<D> {
     try(types: SchemaLike[]): this;
     try(...types: SchemaLike[]): this;
-    when(ref: string | Reference, options: WhenOptions): this;
-    when(ref: Schema, options: WhenSchemaOptions): this;
 }
 
-export interface LazySchema extends AnySchema {
+export interface LazySchema<D extends SchemaData = DefaultSchemaData<{
+    schema: 'lazy';
+    type: any;
+}>> extends AnySchema<D> {
 }
 
 export interface Reference extends JoiObject {
@@ -1036,7 +1163,10 @@ export const version: string;
 /**
  * Generates a schema object that matches any data type.
  */
-export function any(): AnySchema;
+export function any(): AnySchema<DefaultSchemaData<{
+    schema: 'any';
+    type: any;
+}>>;
 
 /**
  * Generates a schema object that matches an array data type.
@@ -1158,6 +1288,7 @@ export function extend(extension: Extension|Extension[], ...extensions: Array<Ex
 // --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
 import * as Module from 'joi';
+
 export type Root = typeof Module;
 export type DefaultsFunction = (root: Schema) => Schema;
 
